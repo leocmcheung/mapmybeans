@@ -217,7 +217,9 @@ def geocode():
         return jsonify({"error": f"Geocoding request failed: {e}"}), 502
 
     if result.get("status") != "OK" or not result.get("results"):
-        return jsonify({"error": f"No location found for: {query}"}), 404
+        status = result.get("status", "UNKNOWN")
+        detail = result.get("error_message", "no details")
+        return jsonify({"error": f"Geocoding API: {status} — {detail}"}), 404
 
     top = result["results"][0]
     loc = top["geometry"]["location"]
