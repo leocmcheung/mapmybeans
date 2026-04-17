@@ -1,17 +1,13 @@
 /* =================================================================
-   Coffee Atlas — app logic (Flask / BigQuery / Cloud Vision backend)
-   - Tabs
-   - OCR via Cloud Vision API (server-side)
-   - Form extraction & submission
-   - Library with search + delete
-   - Leaflet map: country pins clustered, farm pins on zoom/click
-   - Data: loaded from BigQuery via /api/beans
+   Coffee Atlas — app logic (Flask / BigQuery / Cloud Vision / GCS)
 ================================================================= */
 
 // -------------------- State --------------------
 let beans = [];
 let map = null;
 let markerLayer = null;
+let currentBeanId  = null; // set when an image is dropped, reused on form submit
+let currentImageUrl = null;
 
 // -------------------- Utilities --------------------
 const $ = (sel) => document.querySelector(sel);
@@ -46,7 +42,6 @@ function initTabs() {
       const target = tab.dataset.tab;
       $$(".tab").forEach(t => t.classList.toggle("active", t === tab));
       $$(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${target}`));
-      // init map lazily when its tab is shown (Leaflet needs a visible container)
       if (target === "map") {
         setTimeout(() => { initMap(); renderMap(); }, 50);
       }
@@ -103,11 +98,12 @@ function initDropzone() {
 }
 
 function handleImage(file) {
+  currentBeanId  = uid(); // fix the ID now so the GCS filename matches the saved bean
+  currentImageUrl = null;
   const dz = $("#dropzone");
-  const preview = $("#preview");
   const reader = new FileReader();
   reader.onload = (e) => {
-    preview.src = e.target.result;
+    $("#preview").src = e.target.result;
     dz.classList.add("has-preview");
     runOCR(file);
   };
@@ -126,8 +122,10 @@ async function runOCR(file) {
     fill.style.width = "50%";
     const fd = new FormData();
     fd.append("image", file);
-    const { text, error } = await apiFetch("/api/ocr", { method: "POST", body: fd });
+    fd.append("beanId", currentBeanId); // so GCS filename matches future bean ID
+    const { text, imageUrl, error } = await apiFetch("/api/ocr", { method: "POST", body: fd });
     if (error) throw new Error(error);
+    currentImageUrl = imageUrl || null;
     fill.style.width = "100%";
     textEl.textContent = "Done. Extracted fields are pre-filled below — edit as needed.";
     const parsed = parseLabel(text || "");
@@ -139,25 +137,21 @@ async function runOCR(file) {
 }
 
 // -------------------- Label parser --------------------
-// Heuristic label parser — works best on packaging with clear labels.
 function parseLabel(text) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const joined = lines.join(" \n ");
   const result = {};
 
-  // Country — check against our known coffee-producing countries
   const knownCountries = Object.values(COUNTRY_COORDS).map(c => c.canonical);
   for (const c of knownCountries) {
     const re = new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
     if (re.test(joined)) { result.country = c.replace(/ \(.*\)$/, ""); break; }
   }
 
-  // Roast date — look for patterns like "Roasted: 12/03/2026" or "Roast date 2026-03-12"
   const roastRe = /roast(?:ed)?[\s:\-]*(?:date|on)?[\s:\-]*([0-9]{1,2}[\/\-.][0-9]{1,2}[\/\-.][0-9]{2,4}|[0-9]{4}[\/\-.][0-9]{1,2}[\/\-.][0-9]{1,2})/i;
   const rm = joined.match(roastRe);
   if (rm) result.roastDate = normalizeDate(rm[1]);
 
-  // Process
   const procRe = /\b(washed|natural|honey|anaerobic|semi[-\s]?washed|wet[-\s]?hulled|fully washed)\b/i;
   const pm = joined.match(procRe);
   if (pm) {
@@ -169,23 +163,19 @@ function parseLabel(text) {
     else result.process = "Other";
   }
 
-  // Altitude
   const altRe = /([\d,]{3,5}\s*[-–]\s*[\d,]{3,5}\s*(?:masl|m|metres|meters))|([\d,]{3,5}\s*(?:masl|m\.a\.s\.l|metres|meters))/i;
   const am = joined.match(altRe);
   if (am) result.altitude = (am[0] || "").trim();
 
-  // Taste notes — look for a line starting with "notes" or "tasting notes" or "flavour"
   const notesLine = lines.find(l => /^(tasting\s+)?(notes|flavou?r|aroma|cupping)/i.test(l));
   if (notesLine) {
     result.tasteNotes = notesLine.replace(/^(tasting\s+)?(notes|flavou?r|aroma|cupping)[\s:\-]*/i, "").trim();
   }
 
-  // Variety
   const varRe = /\b(heirloom|bourbon|typica|caturra|catuai|geisha|gesha|pacamara|sl28|sl34|pacas|mundo novo|maragogype|sidra|castillo|parainema)\b/i;
   const vm = joined.match(varRe);
   if (vm) result.variety = vm[0].replace(/\b\w/g, l => l.toUpperCase());
 
-  // Region/farm heuristics (best-effort)
   const regionRe = /(?:region|origin)[\s:\-]+([A-Z][A-Za-z\s-]{2,40})/;
   const regm = joined.match(regionRe);
   if (regm) result.region = regm[1].trim();
@@ -223,10 +213,9 @@ function initForm() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    const record = { id: uid(), createdAt: new Date().toISOString() };
+    const record = { id: currentBeanId || uid(), createdAt: new Date().toISOString() };
     for (const [k, v] of fd.entries()) record[k] = typeof v === "string" ? v.trim() : v;
 
-    // Auto-fill coordinates from country if user hasn't provided them
     if (!record.lat && !record.lng && record.country) {
       const c = lookupCountry(record.country);
       if (c) {
@@ -239,6 +228,8 @@ function initForm() {
       record.lng = record.lng ? parseFloat(record.lng) : null;
     }
 
+    if (currentImageUrl) record.imageUrl = currentImageUrl;
+
     const submitBtn = form.querySelector('[type="submit"]');
     submitBtn.disabled = true;
     try {
@@ -247,7 +238,9 @@ function initForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(record),
       });
-      beans.unshift(record); // optimistic: prepend so it appears first in library
+      beans.unshift(record);
+      currentBeanId  = null;
+      currentImageUrl = null;
       toast("Saved to library");
       form.reset();
       $("#dropzone").classList.remove("has-preview");
@@ -314,6 +307,7 @@ function renderLibrary() {
     return `
       <article class="bean" data-id="${b.id}">
         <button class="bean__del" data-del="${b.id}" title="Delete">×</button>
+        ${b.imageUrl ? `<div class="bean__photo"><img src="${escapeHtml(b.imageUrl)}" loading="lazy" alt="" /></div>` : ""}
         <div class="bean__origin">${escapeHtml(b.country || "Unknown origin")}${b.region ? " · " + escapeHtml(b.region) : ""}</div>
         <h3 class="bean__name">${escapeHtml(b.name || "Unnamed bean")}</h3>
         <div class="bean__meta">${[b.roaster, fmtDate(b.roastDate)].filter(Boolean).map(escapeHtml).join(" · ") || "—"}</div>
@@ -373,6 +367,7 @@ function showBeanDetail(b) {
 
   $("#modal-content").innerHTML = `
     <div class="modal__content">
+      ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" class="bean__photo--modal" loading="lazy" alt="Coffee bag" />` : ""}
       <h3>${escapeHtml(b.name || "Unnamed bean")}</h3>
       <div class="bean__origin">${escapeHtml(b.country || "")}${b.region ? " · " + escapeHtml(b.region) : ""}</div>
       <dl style="margin-top:18px;">
@@ -406,47 +401,14 @@ function initMap() {
   markerLayer = L.layerGroup().addTo(map);
 }
 
-function groupBeansByLocation() {
-  const byCountry = new Map();
-  const farms = [];
-
-  for (const b of beans) {
-    if (!b.country) continue;
-    const key = b.country.trim();
-    if (!byCountry.has(key)) {
-      const c = lookupCountry(b.country) || { lat: b.lat, lng: b.lng, canonical: b.country };
-      byCountry.set(key, { country: b.country, lat: c.lat, lng: c.lng, beans: [] });
-    }
-    byCountry.get(key).beans.push(b);
-
-    // Only plot as a separate farm marker if user provided coords AND they differ from the country centroid
-    if (!b.coordsFromCountry && b.lat != null && b.lng != null) {
-      farms.push(b);
-    }
-  }
-  return { countries: Array.from(byCountry.values()), farms };
-}
-
 function renderMap() {
   if (!map) return;
   markerLayer.clearLayers();
 
-  const { countries, farms } = groupBeansByLocation();
-  if (!countries.length && !farms.length) return;
+  const withCoords = beans.filter(b => b.lat != null && b.lng != null);
+  if (!withCoords.length) return;
 
-  countries.forEach(c => {
-    if (c.lat == null || c.lng == null) return;
-    const icon = L.divIcon({
-      className: "coffee-marker",
-      html: `<div class="coffee-marker__inner">${c.beans.length}</div>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 14],
-    });
-    const marker = L.marker([c.lat, c.lng], { icon }).addTo(markerLayer);
-    marker.bindPopup(buildCountryPopup(c));
-  });
-
-  farms.forEach(b => {
+  withCoords.forEach(b => {
     const icon = L.divIcon({
       className: "coffee-marker coffee-marker--farm",
       html: `<div class="coffee-marker__inner"></div>`,
@@ -454,51 +416,24 @@ function renderMap() {
       iconAnchor: [9, 9],
     });
     const marker = L.marker([b.lat, b.lng], { icon }).addTo(markerLayer);
-    marker.bindPopup(buildFarmPopup(b));
+    marker.bindPopup(buildBeanPopup(b));
     marker.on("click", () => marker.openPopup());
   });
 
-  const allPoints = [
-    ...countries.filter(c => c.lat != null).map(c => [c.lat, c.lng]),
-    ...farms.map(b => [b.lat, b.lng]),
-  ];
+  const allPoints = withCoords.map(b => [b.lat, b.lng]);
   if (allPoints.length) {
-    map.fitBounds(L.latLngBounds(allPoints).pad(0.2), { maxZoom: 6 });
+    map.fitBounds(L.latLngBounds(allPoints).pad(0.2), { maxZoom: 10 });
   }
 }
 
-function buildCountryPopup(c) {
+function buildBeanPopup(b) {
   const wrap = document.createElement("div");
   wrap.innerHTML = `
-    <div class="pop-title">${escapeHtml(c.country)}</div>
-    <div class="pop-meta">${c.beans.length} bean${c.beans.length === 1 ? "" : "s"} logged</div>
-    <div style="margin-top:10px; font-size:0.85rem; max-height:180px; overflow-y:auto;">
-      ${c.beans.map(b => `
-        <div style="padding:6px 0; border-top:1px dotted var(--line);">
-          <strong style="font-style:italic;">${escapeHtml(b.name || "Unnamed")}</strong>
-          ${b.farm ? `<br><span class="pop-meta">${escapeHtml(b.farm)}</span>` : ""}
-          <br><button class="pop-view" data-bean-id="${b.id}">View details →</button>
-        </div>
-      `).join("")}
-    </div>
-  `;
-  wrap.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-bean-id]");
-    if (btn) {
-      const bean = beans.find(x => x.id === btn.dataset.beanId);
-      if (bean) showBeanDetail(bean);
-    }
-  });
-  return wrap;
-}
-
-function buildFarmPopup(b) {
-  const wrap = document.createElement("div");
-  wrap.innerHTML = `
+    ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" style="width:200px;height:130px;object-fit:cover;border-radius:4px;margin-bottom:8px;display:block;" loading="lazy" alt="" />` : ""}
     <div class="pop-title">${escapeHtml(b.name || "Unnamed bean")}</div>
-    <div class="pop-meta">${escapeHtml(b.farm || b.region || b.country || "")}</div>
-    ${b.tasteNotes ? `<div style="margin-top:8px; font-size:0.9rem;">${escapeHtml(b.tasteNotes)}</div>` : ""}
-    <button class="pop-view" data-bean-id="${b.id}">View full details →</button>
+    <div class="pop-meta">${escapeHtml([b.farm, b.region, b.country].filter(Boolean).join(" · "))}</div>
+    ${b.tasteNotes ? `<div style="margin-top:6px;font-size:0.85rem;">${escapeHtml(b.tasteNotes)}</div>` : ""}
+    <button class="pop-view" data-bean-id="${b.id}" style="margin-top:8px;">View full details →</button>
   `;
   wrap.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-bean-id]");
@@ -592,5 +527,5 @@ function initSearch() {
   initModal();
   await initData();
   renderLibrary();
-  if (map) renderMap(); // re-render if Atlas tab was opened before data finished loading
+  if (map) renderMap();
 })();

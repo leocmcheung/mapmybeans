@@ -6,13 +6,14 @@ import urllib.parse
 import traceback
 from datetime import datetime, date, timezone
 
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for
-from google.cloud import bigquery, vision
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, Response
+from google.cloud import bigquery, vision, storage
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-in-prod")
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+GCS_BUCKET   = os.environ.get("GCS_BUCKET", "")
 
 
 @app.before_request
@@ -41,14 +42,15 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
-_bq_client = None
-_vision_client = None
+
+_bq_client      = None
+_vision_client  = None
+_storage_client = None
 
 
 def bq():
     global _bq_client
     if _bq_client is None:
-        # No project arg — auto-detected from Cloud Run metadata / ADC on local dev.
         _bq_client = bigquery.Client()
     return _bq_client
 
@@ -62,6 +64,13 @@ def vc():
     if _vision_client is None:
         _vision_client = vision.ImageAnnotatorClient()
     return _vision_client
+
+
+def gcs():
+    global _storage_client
+    if _storage_client is None:
+        _storage_client = storage.Client()
+    return _storage_client
 
 
 def _parse_date(val):
@@ -95,6 +104,7 @@ def _row_to_json(row):
         "openDate":         d["open_date"].isoformat() if d.get("open_date") else None,
         "notes":            d.get("notes"),
         "coordsFromCountry": d.get("coords_from_country", False),
+        "imageUrl":         d.get("image_url"),
     }
 
 
@@ -110,11 +120,8 @@ def get_beans():
 
 
 def _date_param(name, val):
-    """Return a DATE ScalarQueryParameter, falling back to STRING NULL when val is None."""
     d = _parse_date(val)
     if d is None:
-        # BigQuery won't accept None for a typed DATE param in some client versions;
-        # cast a NULL string to DATE in SQL instead — caller must use CAST(@name AS DATE).
         return bigquery.ScalarQueryParameter(name, "STRING", None)
     return bigquery.ScalarQueryParameter(name, "DATE", d)
 
@@ -129,11 +136,11 @@ def add_bean():
     INSERT INTO `{table_ref()}`
     (id, created_at, name, roaster, roast_date, country, region, farm, lat, lng,
      taste_notes, process, variety, altitude, purchase_date, purchase_location,
-     open_date, notes, coords_from_country)
+     open_date, notes, coords_from_country, image_url)
     VALUES
     (@id, @created_at, @name, @roaster, CAST(@roast_date AS DATE), @country, @region, @farm,
      @lat, @lng, @taste_notes, @process, @variety, @altitude, CAST(@purchase_date AS DATE),
-     @purchase_location, CAST(@open_date AS DATE), @notes, @coords_from_country)
+     @purchase_location, CAST(@open_date AS DATE), @notes, @coords_from_country, @image_url)
     """
 
     bean_id = data.get("id") or str(uuid.uuid4())
@@ -157,6 +164,7 @@ def add_bean():
         _date_param("open_date",                                        data.get("openDate")),
         bigquery.ScalarQueryParameter("notes",             "STRING",    data.get("notes") or ""),
         bigquery.ScalarQueryParameter("coords_from_country", "BOOL",   bool(data.get("coordsFromCountry", False))),
+        bigquery.ScalarQueryParameter("image_url",         "STRING",    data.get("imageUrl") or None),
     ]
 
     try:
@@ -218,13 +226,46 @@ def geocode():
 def ocr():
     if "image" not in request.files:
         return jsonify({"error": "No image provided"}), 400
-    img_bytes = request.files["image"].read()
+
+    f = request.files["image"]
+    img_bytes = f.read()
+    bean_id = request.form.get("beanId") or str(uuid.uuid4())
+
+    # Upload to GCS and return a proxy URL
+    image_url = None
+    if GCS_BUCKET:
+        try:
+            ext = (f.filename or "").rsplit(".", 1)[-1].lower() or "jpg"
+            filename = f"{bean_id}.{ext}"
+            blob = gcs().bucket(GCS_BUCKET).blob(f"images/{filename}")
+            blob.upload_from_string(img_bytes, content_type=f.content_type or "image/jpeg")
+            image_url = f"/api/image/{filename}"
+        except Exception as e:
+            print(f"GCS upload failed: {e}")
+
+    # OCR
     image = vision.Image(content=img_bytes)
     resp = vc().document_text_detection(image=image)
     if resp.error.message:
         return jsonify({"error": resp.error.message}), 500
     text = resp.full_text_annotation.text if resp.full_text_annotation else ""
-    return jsonify({"text": text})
+    return jsonify({"text": text, "imageUrl": image_url})
+
+
+@app.route("/api/image/<path:filename>")
+def get_image(filename):
+    if not GCS_BUCKET:
+        return "", 404
+    try:
+        blob = gcs().bucket(GCS_BUCKET).blob(f"images/{filename}")
+        img_bytes = blob.download_as_bytes()
+        return Response(
+            img_bytes,
+            content_type=blob.content_type or "image/jpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+    except Exception:
+        return "", 404
 
 
 if __name__ == "__main__":

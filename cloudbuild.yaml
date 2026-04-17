@@ -28,7 +28,7 @@ steps:
       - managed
       - --allow-unauthenticated
       - --set-env-vars
-      - GOOGLE_CLOUD_PROJECT=$PROJECT_ID
+      - GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET=$PROJECT_ID-mapmybeans-images
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA

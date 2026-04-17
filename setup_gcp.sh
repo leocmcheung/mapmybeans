@@ -58,6 +58,22 @@ for role in roles/bigquery.dataEditor roles/bigquery.jobUser; do
     --member="serviceAccount:${COMPUTE_SA}" --role="$role" --condition=None
 done
 
+echo "▶ Creating GCS image bucket"
+BUCKET="${PROJECT_ID}-mapmybeans-images"
+gcloud storage buckets create "gs://${BUCKET}" \
+  --location="$REGION" \
+  --project="$PROJECT_ID" 2>/dev/null || echo "  (already exists)"
+
+echo "▶ Granting Cloud Run service account GCS access"
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${COMPUTE_SA}" \
+  --role="roles/storage.objectAdmin"
+
+echo "▶ Adding image_url column to BigQuery table (safe to re-run)"
+bq query --use_legacy_sql=false --project_id="$PROJECT_ID" \
+  "ALTER TABLE \`${PROJECT_ID}.mapmybeans.beans\` ADD COLUMN IF NOT EXISTS image_url STRING" \
+  2>/dev/null || echo "  (column may already exist)"
+
 echo ""
 echo "✅ Infrastructure ready."
 echo ""
