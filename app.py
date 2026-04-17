@@ -13,7 +13,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-in-prod")
 
 APP_PASSWORD  = os.environ.get("APP_PASSWORD", "")
-GCS_BUCKET    = os.environ.get("GCS_BUCKET", "")
+GCS_BUCKET    = 'mapmybeans-mapmybeans-images'
 MAPS_API_KEY  = os.environ.get("MAPS_API_KEY", "")
 
 
@@ -241,6 +241,7 @@ def ocr():
 
     # Upload to GCS and return a proxy URL
     image_url = None
+    image_error = None
     if GCS_BUCKET:
         try:
             ext = (f.filename or "").rsplit(".", 1)[-1].lower() or "jpg"
@@ -249,7 +250,10 @@ def ocr():
             blob.upload_from_string(img_bytes, content_type=f.content_type or "image/jpeg")
             image_url = f"/api/image/{filename}"
         except Exception as e:
+            image_error = str(e)
             print(f"GCS upload failed: {e}")
+    elif not GCS_BUCKET:
+        image_error = "GCS_BUCKET env var not set"
 
     # OCR
     image = vision.Image(content=img_bytes)
@@ -257,7 +261,7 @@ def ocr():
     if resp.error.message:
         return jsonify({"error": resp.error.message}), 500
     text = resp.full_text_annotation.text if resp.full_text_annotation else ""
-    return jsonify({"text": text, "imageUrl": image_url})
+    return jsonify({"text": text, "imageUrl": image_url, "imageError": image_error})
 
 
 @app.route("/api/image/<path:filename>")

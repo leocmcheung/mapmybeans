@@ -123,8 +123,9 @@ async function runOCR(file) {
     const fd = new FormData();
     fd.append("image", file);
     fd.append("beanId", currentBeanId); // so GCS filename matches future bean ID
-    const { text, imageUrl, error } = await apiFetch("/api/ocr", { method: "POST", body: fd });
+    const { text, imageUrl, imageError, error } = await apiFetch("/api/ocr", { method: "POST", body: fd });
     if (error) throw new Error(error);
+    if (imageError) toast("Image not saved: " + imageError, true);
     currentImageUrl = imageUrl || null;
     fill.style.width = "100%";
     textEl.textContent = "Done. Extracted fields are pre-filled below — edit as needed.";
