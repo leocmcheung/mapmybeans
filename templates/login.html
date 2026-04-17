@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coffee Atlas — Sign in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <style>
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .login-card {
+      max-width: 380px;
+      width: 100%;
+    }
+    .login-brand {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .login-error {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: #b94040;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="paper-grain"></div>
+  <div class="login-wrap">
+    <article class="card login-card">
+      <div class="login-brand">
+        <div class="stamp">
+          <span class="stamp__ring"></span>
+          <span class="stamp__text">Est. 2026</span>
+        </div>
+        <div>
+          <h1 class="masthead__title" style="font-size:1.8rem;">Coffee Atlas</h1>
+          <p class="masthead__sub">A personal journal of beans</p>
+        </div>
+      </div>
+
+      {% if error %}
+      <p class="login-error">{{ error }}</p>
+      {% endif %}
+
+      <form method="post" class="form">
+        <label>Password
+          <input type="password" name="password" autofocus required autocomplete="current-password" />
+        </label>
+        <div class="form__actions" style="margin-top: 1.5rem;">
+          <button type="submit" class="btn btn--primary" style="width:100%;">Enter →</button>
+        </div>
+      </form>
+    </article>
+  </div>
+</body>
+</html>

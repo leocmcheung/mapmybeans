@@ -2,10 +2,40 @@ import os
 import uuid
 from datetime import datetime, date
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from google.cloud import bigquery, vision
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-in-prod")
+
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+
+@app.before_request
+def require_password():
+    if not APP_PASSWORD:
+        return  # no password set — skip auth (local dev)
+    if request.endpoint in ("login", "logout", "static"):
+        return
+    if not session.get("authenticated"):
+        return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("password") == APP_PASSWORD:
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        error = "Wrong password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT", "")
 TABLE_REF = f"{PROJECT_ID}.mapmybeans.beans"
