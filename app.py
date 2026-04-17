@@ -3,7 +3,8 @@ import uuid
 import json as _json
 import urllib.request
 import urllib.parse
-from datetime import datetime, date
+import traceback
+from datetime import datetime, date, timezone
 
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from google.cloud import bigquery, vision
@@ -106,6 +107,16 @@ def get_beans():
     return jsonify([_row_to_json(dict(r)) for r in rows])
 
 
+def _date_param(name, val):
+    """Return a DATE ScalarQueryParameter, falling back to STRING NULL when val is None."""
+    d = _parse_date(val)
+    if d is None:
+        # BigQuery won't accept None for a typed DATE param in some client versions;
+        # cast a NULL string to DATE in SQL instead — caller must use CAST(@name AS DATE).
+        return bigquery.ScalarQueryParameter(name, "STRING", None)
+    return bigquery.ScalarQueryParameter(name, "DATE", d)
+
+
 @app.route("/api/beans", methods=["POST"])
 def add_bean():
     data = request.get_json(force=True)
@@ -118,18 +129,18 @@ def add_bean():
      taste_notes, process, variety, altitude, purchase_date, purchase_location,
      open_date, notes, coords_from_country)
     VALUES
-    (@id, @created_at, @name, @roaster, @roast_date, @country, @region, @farm,
-     @lat, @lng, @taste_notes, @process, @variety, @altitude, @purchase_date,
-     @purchase_location, @open_date, @notes, @coords_from_country)
+    (@id, @created_at, @name, @roaster, CAST(@roast_date AS DATE), @country, @region, @farm,
+     @lat, @lng, @taste_notes, @process, @variety, @altitude, CAST(@purchase_date AS DATE),
+     @purchase_location, CAST(@open_date AS DATE), @notes, @coords_from_country)
     """
 
     bean_id = data.get("id") or str(uuid.uuid4())
     params = [
         bigquery.ScalarQueryParameter("id",                "STRING",    bean_id),
-        bigquery.ScalarQueryParameter("created_at",        "TIMESTAMP", datetime.utcnow()),
+        bigquery.ScalarQueryParameter("created_at",        "TIMESTAMP", datetime.now(timezone.utc)),
         bigquery.ScalarQueryParameter("name",              "STRING",    data.get("name") or ""),
         bigquery.ScalarQueryParameter("roaster",           "STRING",    data.get("roaster") or ""),
-        bigquery.ScalarQueryParameter("roast_date",        "DATE",      _parse_date(data.get("roastDate"))),
+        _date_param("roast_date",                                       data.get("roastDate")),
         bigquery.ScalarQueryParameter("country",           "STRING",    data.get("country") or ""),
         bigquery.ScalarQueryParameter("region",            "STRING",    data.get("region") or ""),
         bigquery.ScalarQueryParameter("farm",              "STRING",    data.get("farm") or ""),
@@ -139,15 +150,21 @@ def add_bean():
         bigquery.ScalarQueryParameter("process",           "STRING",    data.get("process") or ""),
         bigquery.ScalarQueryParameter("variety",           "STRING",    data.get("variety") or ""),
         bigquery.ScalarQueryParameter("altitude",          "STRING",    data.get("altitude") or ""),
-        bigquery.ScalarQueryParameter("purchase_date",     "DATE",      _parse_date(data.get("purchaseDate"))),
+        _date_param("purchase_date",                                    data.get("purchaseDate")),
         bigquery.ScalarQueryParameter("purchase_location", "STRING",    data.get("purchaseLocation") or ""),
-        bigquery.ScalarQueryParameter("open_date",         "DATE",      _parse_date(data.get("openDate"))),
+        _date_param("open_date",                                        data.get("openDate")),
         bigquery.ScalarQueryParameter("notes",             "STRING",    data.get("notes") or ""),
         bigquery.ScalarQueryParameter("coords_from_country", "BOOL",   bool(data.get("coordsFromCountry", False))),
     ]
 
-    cfg = bigquery.QueryJobConfig(query_parameters=params)
-    bq().query(q, job_config=cfg).result()
+    try:
+        cfg = bigquery.QueryJobConfig(query_parameters=params)
+        bq().query(q, job_config=cfg).result()
+    except Exception:
+        msg = traceback.format_exc()
+        print(msg)
+        return jsonify({"error": msg}), 500
+
     return jsonify({"success": True, "id": bean_id}), 201
 
 
