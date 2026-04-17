@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coffee Atlas — A Journal of Beans</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="paper-grain"></div>
+
+  <header class="masthead">
+    <div class="masthead__inner">
+      <div class="masthead__brand">
+        <div class="stamp">
+          <span class="stamp__ring"></span>
+          <span class="stamp__text">Est. 2026</span>
+        </div>
+        <div>
+          <h1 class="masthead__title">Coffee Atlas</h1>
+          <p class="masthead__sub">A personal journal of beans and their journeys</p>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="add" role="tab">① Log a Bean</button>
+        <button class="tab" data-tab="library" role="tab">② The Library</button>
+        <button class="tab" data-tab="map" role="tab">③ The Atlas</button>
+        <button class="tab" data-tab="data" role="tab">④ Data</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============== ADD PANEL ============== -->
+    <section class="panel active" id="panel-add" role="tabpanel">
+      <div class="panel__grid">
+        <!-- Step 1: Upload -->
+        <article class="card card--upload">
+          <div class="card__head">
+            <span class="card__num">Step 01</span>
+            <h2 class="card__title">Scan the bag</h2>
+          </div>
+          <p class="card__lede">Photograph the label. We'll read what we can and you'll confirm the rest.</p>
+
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="file-input" accept="image/*" hidden />
+            <div class="dropzone__inner">
+              <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+                <path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
+              </svg>
+              <p class="dropzone__text">Drop a photo here, or <button type="button" class="link" id="browse-btn">browse</button></p>
+              <p class="dropzone__hint">JPG, PNG · processed locally in your browser</p>
+            </div>
+            <img id="preview" class="dropzone__preview" alt="" />
+          </div>
+
+          <div class="ocr-status" id="ocr-status" hidden>
+            <div class="ocr-status__bar"><div class="ocr-status__fill" id="ocr-fill"></div></div>
+            <p class="ocr-status__text" id="ocr-text">Initializing reader…</p>
+          </div>
+        </article>
+
+        <!-- Step 2: Form -->
+        <article class="card card--form">
+          <div class="card__head">
+            <span class="card__num">Step 02</span>
+            <h2 class="card__title">Fill in the passport</h2>
+          </div>
+          <p class="card__lede">Edit what we extracted and add a few details only you'd know.</p>
+
+          <form id="bean-form" class="form">
+            <fieldset class="form__group">
+              <legend>The Bean</legend>
+              <label>Name of the bean
+                <input type="text" name="name" placeholder="e.g. Geisha Natural, Finca La Esmeralda" required />
+              </label>
+              <div class="form__row">
+                <label>Roaster
+                  <input type="text" name="roaster" placeholder="e.g. Square Mile" />
+                </label>
+                <label>Roast date
+                  <input type="date" name="roastDate" />
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form__group">
+              <legend>Origin</legend>
+              <div class="form__row">
+                <label>Country <span class="req">*</span>
+                  <input type="text" name="country" id="country" placeholder="e.g. Ethiopia" required />
+                </label>
+                <label>Region
+                  <input type="text" name="region" placeholder="e.g. Yirgacheffe" />
+                </label>
+              </div>
+              <label>Farm / Washing station
+                <input type="text" name="farm" id="farm" placeholder="e.g. Chelbesa" />
+              </label>
+              <div class="form__row">
+                <label>Latitude <small>(optional)</small>
+                  <input type="number" step="any" name="lat" id="lat" placeholder="e.g. 6.1629" />
+                </label>
+                <label>Longitude <small>(optional)</small>
+                  <input type="number" step="any" name="lng" id="lng" placeholder="e.g. 38.2066" />
+                </label>
+              </div>
+              <button type="button" class="btn btn--ghost" id="geocode-btn">Look up coordinates from country/region</button>
+            </fieldset>
+
+            <fieldset class="form__group">
+              <legend>The Cup</legend>
+              <label>Taste notes
+                <input type="text" name="tasteNotes" placeholder="e.g. bergamot, jasmine, stone fruit" />
+              </label>
+              <div class="form__row">
+                <label>Process
+                  <select name="process">
+                    <option value="">—</option>
+                    <option>Washed</option>
+                    <option>Natural</option>
+                    <option>Honey</option>
+                    <option>Anaerobic</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label>Variety
+                  <input type="text" name="variety" placeholder="e.g. Heirloom" />
+                </label>
+              </div>
+              <label>Altitude
+                <input type="text" name="altitude" placeholder="e.g. 1,900–2,100 masl" />
+              </label>
+            </fieldset>
+
+            <fieldset class="form__group">
+              <legend>Your Story</legend>
+              <div class="form__row">
+                <label>Purchased on
+                  <input type="date" name="purchaseDate" />
+                </label>
+                <label>Purchased at
+                  <input type="text" name="purchaseLocation" placeholder="e.g. Workshop Coffee, Marylebone" />
+                </label>
+              </div>
+              <label>Opened on
+                <input type="date" name="openDate" />
+              </label>
+              <label>Personal notes
+                <textarea name="notes" rows="2" placeholder="What did you think?"></textarea>
+              </label>
+            </fieldset>
+
+            <div class="form__actions">
+              <button type="reset" class="btn btn--ghost">Clear</button>
+              <button type="submit" class="btn btn--primary">Save to library</button>
+            </div>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============== LIBRARY PANEL ============== -->
+    <section class="panel" id="panel-library" role="tabpanel">
+      <div class="panel__header">
+        <div>
+          <h2 class="panel__title">The Library</h2>
+          <p class="panel__sub"><span id="lib-count">0</span> beans catalogued</p>
+        </div>
+        <input type="search" id="lib-search" class="search" placeholder="Search by name, country, roaster…" />
+      </div>
+      <div class="library" id="library"></div>
+    </section>
+
+    <!-- ============== MAP PANEL ============== -->
+    <section class="panel" id="panel-map" role="tabpanel">
+      <div class="panel__header">
+        <div>
+          <h2 class="panel__title">The Atlas</h2>
+          <p class="panel__sub">Click a country pin to see farms within it</p>
+        </div>
+        <div class="legend">
+          <span class="legend__item"><span class="dot dot--country"></span>Country</span>
+          <span class="legend__item"><span class="dot dot--farm"></span>Farm</span>
+        </div>
+      </div>
+      <div id="map" class="map"></div>
+    </section>
+
+    <!-- ============== DATA PANEL ============== -->
+    <section class="panel" id="panel-data" role="tabpanel">
+      <div class="panel__header">
+        <div>
+          <h2 class="panel__title">Data</h2>
+          <p class="panel__sub">Sync with your GitHub repo</p>
+        </div>
+      </div>
+
+      <div class="data-grid">
+        <article class="card">
+          <h3 class="card__title">How storage works</h3>
+          <p class="prose">Your records live in <code>beans.json</code>. Edits are held in your browser first. To sync across devices, export the file and commit it to your GitHub repo — the site will read it on next load.</p>
+          <ol class="prose prose--list">
+            <li>Click <strong>Export JSON</strong> to download your current library.</li>
+            <li>Replace <code>beans.json</code> at the root of your repo and commit.</li>
+            <li>Others (and future-you) will load the updated data automatically.</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h3 class="card__title">Actions</h3>
+          <div class="data-actions">
+            <button class="btn btn--primary" id="export-btn">⬇ Export beans.json</button>
+            <label class="btn btn--ghost">
+              ⬆ Import beans.json
+              <input type="file" id="import-input" accept=".json,application/json" hidden />
+            </label>
+            <button class="btn btn--ghost" id="reload-btn">↻ Reload from repo</button>
+            <button class="btn btn--danger" id="clear-btn">✕ Clear local data</button>
+          </div>
+          <p class="prose prose--hint" id="data-status">Ready.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Brewed with care · <a href="https://github.com" target="_blank" rel="noopener">hosted on GitHub Pages</a></p>
+  </footer>
+
+  <!-- Modal for farm detail -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__card">
+      <button class="modal__close" data-close aria-label="Close">×</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- Libraries -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+  <script src="countries.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
