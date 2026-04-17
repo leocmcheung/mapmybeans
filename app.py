@@ -12,8 +12,9 @@ from google.cloud import bigquery, vision, storage
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-in-prod")
 
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
-GCS_BUCKET   = os.environ.get("GCS_BUCKET", "")
+APP_PASSWORD  = os.environ.get("APP_PASSWORD", "")
+GCS_BUCKET    = os.environ.get("GCS_BUCKET", "")
+MAPS_API_KEY  = os.environ.get("MAPS_API_KEY", "")
 
 
 @app.before_request
@@ -196,29 +197,34 @@ def clear_beans():
 
 @app.route("/api/geocode", methods=["POST"])
 def geocode():
-    data = request.get_json(force=True)
-    parts = [data.get(k, "").strip() for k in ("farm", "region", "country")]
+    if not MAPS_API_KEY:
+        return jsonify({"error": "MAPS_API_KEY not configured on the server"}), 503
+
+    body = request.get_json(force=True)
+    parts = [body.get(k, "").strip() for k in ("farm", "region", "country")]
     query = ", ".join(p for p in parts if p)
     if not query:
         return jsonify({"error": "Provide at least a country"}), 400
 
-    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({
-        "q": query, "format": "json", "limit": 1,
+    url = "https://maps.googleapis.com/maps/api/geocode/json?" + urllib.parse.urlencode({
+        "address": query,
+        "key": MAPS_API_KEY,
     })
-    req = urllib.request.Request(url, headers={"User-Agent": "mapmybeans/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            results = _json.loads(resp.read())
+        with urllib.request.urlopen(url, timeout=6) as resp:
+            result = _json.loads(resp.read())
     except Exception as e:
         return jsonify({"error": f"Geocoding request failed: {e}"}), 502
 
-    if not results:
+    if result.get("status") != "OK" or not result.get("results"):
         return jsonify({"error": f"No location found for: {query}"}), 404
 
+    top = result["results"][0]
+    loc = top["geometry"]["location"]
     return jsonify({
-        "lat": float(results[0]["lat"]),
-        "lng": float(results[0]["lon"]),
-        "display_name": results[0]["display_name"],
+        "lat": loc["lat"],
+        "lng": loc["lng"],
+        "display_name": top.get("formatted_address", query),
     })
 
 

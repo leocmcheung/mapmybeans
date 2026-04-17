@@ -16,6 +16,7 @@ gcloud services enable \
   bigquery.googleapis.com \
   vision.googleapis.com \
   artifactregistry.googleapis.com \
+  geocoding-backend.googleapis.com \
   --project="$PROJECT_ID"
 
 echo "▶ Creating Artifact Registry repository"
