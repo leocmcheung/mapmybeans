@@ -287,9 +287,14 @@ def ocr():
     try:
         text = _ocr_bytes(bytes1, f1.content_type or "image/jpeg")
         if bytes2:
-            text2 = _ocr_bytes(bytes2, f2.content_type or "image/jpeg")
+            mime2 = f2.content_type or "image/jpeg"
+            text2 = _ocr_bytes(bytes2, mime2)
             if text2:
-                text = text + "\n\n" + text2
+                # PDF carries richer structured data — put it first so the parser prefers it
+                if mime2 == "application/pdf":
+                    text = text2 + "\n\n" + text
+                else:
+                    text = text + "\n\n" + text2
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
 
