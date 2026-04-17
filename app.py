@@ -41,9 +41,6 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT", "")
-TABLE_REF = f"{PROJECT_ID}.mapmybeans.beans"
-
 _bq_client = None
 _vision_client = None
 
@@ -51,8 +48,13 @@ _vision_client = None
 def bq():
     global _bq_client
     if _bq_client is None:
-        _bq_client = bigquery.Client(project=PROJECT_ID)
+        # No project arg — auto-detected from Cloud Run metadata / ADC on local dev.
+        _bq_client = bigquery.Client()
     return _bq_client
+
+
+def table_ref():
+    return f"{bq().project}.mapmybeans.beans"
 
 
 def vc():
@@ -103,7 +105,7 @@ def index():
 
 @app.route("/api/beans", methods=["GET"])
 def get_beans():
-    rows = bq().query(f"SELECT * FROM `{TABLE_REF}` ORDER BY created_at DESC").result()
+    rows = bq().query(f"SELECT * FROM `{table_ref()}` ORDER BY created_at DESC").result()
     return jsonify([_row_to_json(dict(r)) for r in rows])
 
 
@@ -124,7 +126,7 @@ def add_bean():
     lng = data.get("lng")
 
     q = f"""
-    INSERT INTO `{TABLE_REF}`
+    INSERT INTO `{table_ref()}`
     (id, created_at, name, roaster, roast_date, country, region, farm, lat, lng,
      taste_notes, process, variety, altitude, purchase_date, purchase_location,
      open_date, notes, coords_from_country)
@@ -170,7 +172,7 @@ def add_bean():
 
 @app.route("/api/beans/<bean_id>", methods=["DELETE"])
 def delete_bean(bean_id):
-    q = f"DELETE FROM `{TABLE_REF}` WHERE id = @id"
+    q = f"DELETE FROM `{table_ref()}` WHERE id = @id"
     cfg = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("id", "STRING", bean_id)
     ])
@@ -180,7 +182,7 @@ def delete_bean(bean_id):
 
 @app.route("/api/beans", methods=["DELETE"])
 def clear_beans():
-    bq().query(f"DELETE FROM `{TABLE_REF}` WHERE TRUE").result()
+    bq().query(f"DELETE FROM `{table_ref()}` WHERE TRUE").result()
     return jsonify({"success": True})
 
 
