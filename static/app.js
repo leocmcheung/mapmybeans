@@ -260,15 +260,33 @@ function initForm() {
     }
   });
 
-  $("#geocode-btn").addEventListener("click", () => {
-    const country = form.elements.country.value;
-    const c = lookupCountry(country);
-    if (c) {
-      form.elements.lat.value = c.lat;
-      form.elements.lng.value = c.lng;
-      toast(`Using centroid for ${c.canonical}`);
-    } else {
-      toast("Country not in lookup — enter coordinates manually", true);
+  const geocodeBtn = $("#geocode-btn");
+  geocodeBtn.addEventListener("click", async () => {
+    const farm    = form.elements.farm.value.trim();
+    const region  = form.elements.region.value.trim();
+    const country = form.elements.country.value.trim();
+
+    if (!country && !region && !farm) {
+      toast("Enter at least a country first", true);
+      return;
+    }
+
+    geocodeBtn.disabled = true;
+    geocodeBtn.textContent = "Looking up…";
+    try {
+      const { lat, lng, display_name } = await apiFetch("/api/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ farm, region, country }),
+      });
+      form.elements.lat.value = lat;
+      form.elements.lng.value = lng;
+      toast(display_name.split(",").slice(0, 3).join(",").trim());
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      geocodeBtn.disabled = false;
+      geocodeBtn.textContent = "Look up exact coordinates for this farm";
     }
   });
 }

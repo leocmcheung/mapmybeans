@@ -1,5 +1,8 @@
 import os
 import uuid
+import json as _json
+import urllib.request
+import urllib.parse
 from datetime import datetime, date
 
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
@@ -162,6 +165,34 @@ def delete_bean(bean_id):
 def clear_beans():
     bq().query(f"DELETE FROM `{TABLE_REF}` WHERE TRUE").result()
     return jsonify({"success": True})
+
+
+@app.route("/api/geocode", methods=["POST"])
+def geocode():
+    data = request.get_json(force=True)
+    parts = [data.get(k, "").strip() for k in ("farm", "region", "country")]
+    query = ", ".join(p for p in parts if p)
+    if not query:
+        return jsonify({"error": "Provide at least a country"}), 400
+
+    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({
+        "q": query, "format": "json", "limit": 1,
+    })
+    req = urllib.request.Request(url, headers={"User-Agent": "mapmybeans/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            results = _json.loads(resp.read())
+    except Exception as e:
+        return jsonify({"error": f"Geocoding request failed: {e}"}), 502
+
+    if not results:
+        return jsonify({"error": f"No location found for: {query}"}), 404
+
+    return jsonify({
+        "lat": float(results[0]["lat"]),
+        "lng": float(results[0]["lon"]),
+        "display_name": results[0]["display_name"],
+    })
 
 
 @app.route("/api/ocr", methods=["POST"])
