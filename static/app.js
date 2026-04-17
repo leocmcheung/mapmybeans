@@ -592,4 +592,5 @@ function initSearch() {
   initModal();
   await initData();
   renderLibrary();
+  if (map) renderMap(); // re-render if Atlas tab was opened before data finished loading
 })();
