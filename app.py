@@ -235,12 +235,24 @@ def _upload_to_gcs(img_bytes, content_type, filename):
     blob.upload_from_string(img_bytes, content_type=content_type or "image/jpeg")
 
 
-def _ocr_bytes(img_bytes):
-    image = vision.Image(content=img_bytes)
-    resp = vc().document_text_detection(image=image)
-    if resp.error.message:
-        raise RuntimeError(resp.error.message)
-    return resp.full_text_annotation.text if resp.full_text_annotation else ""
+def _ocr_bytes(file_bytes, mime_type="image/jpeg"):
+    if mime_type == "application/pdf":
+        input_config = vision.InputConfig(content=file_bytes, mime_type="application/pdf")
+        feature = vision.Feature(type_=vision.Feature.Type.DOCUMENT_TEXT_DETECTION)
+        req = vision.AnnotateFileRequest(input_config=input_config, features=[feature])
+        batch = vc().batch_annotate_files(requests=[req])
+        pages = batch.responses[0].responses if batch.responses else []
+        texts = [p.full_text_annotation.text for p in pages if p.full_text_annotation]
+        errors = [p.error.message for p in pages if p.error.message]
+        if errors:
+            raise RuntimeError(errors[0])
+        return "\n".join(texts)
+    else:
+        image = vision.Image(content=file_bytes)
+        resp = vc().document_text_detection(image=image)
+        if resp.error.message:
+            raise RuntimeError(resp.error.message)
+        return resp.full_text_annotation.text if resp.full_text_annotation else ""
 
 
 @app.route("/api/ocr", methods=["POST"])
@@ -273,9 +285,9 @@ def ocr():
         image_error = "GCS_BUCKET env var not set"
 
     try:
-        text = _ocr_bytes(bytes1)
+        text = _ocr_bytes(bytes1, f1.content_type or "image/jpeg")
         if bytes2:
-            text2 = _ocr_bytes(bytes2)
+            text2 = _ocr_bytes(bytes2, f2.content_type or "image/jpeg")
             if text2:
                 text = text + "\n\n" + text2
     except RuntimeError as e:
