@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
 </head>
 <body>
   <div class="paper-grain"></div>
@@ -53,14 +53,14 @@
                 <path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
               </svg>
               <p class="dropzone__text">Drop a photo here, or <button type="button" class="link" id="browse-btn">browse</button></p>
-              <p class="dropzone__hint">JPG, PNG · processed locally in your browser</p>
+              <p class="dropzone__hint">JPG, PNG · processed by Cloud Vision API</p>
             </div>
             <img id="preview" class="dropzone__preview" alt="" />
           </div>
 
           <div class="ocr-status" id="ocr-status" hidden>
             <div class="ocr-status__bar"><div class="ocr-status__fill" id="ocr-fill"></div></div>
-            <p class="ocr-status__text" id="ocr-text">Initializing reader…</p>
+            <p class="ocr-status__text" id="ocr-text">Sending to Cloud Vision API…</p>
           </div>
         </article>
 
@@ -196,19 +196,14 @@
       <div class="panel__header">
         <div>
           <h2 class="panel__title">Data</h2>
-          <p class="panel__sub">Sync with your GitHub repo</p>
+          <p class="panel__sub">Backed by Google BigQuery</p>
         </div>
       </div>
 
       <div class="data-grid">
         <article class="card">
           <h3 class="card__title">How storage works</h3>
-          <p class="prose">Your records live in <code>beans.json</code>. Edits are held in your browser first. To sync across devices, export the file and commit it to your GitHub repo — the site will read it on next load.</p>
-          <ol class="prose prose--list">
-            <li>Click <strong>Export JSON</strong> to download your current library.</li>
-            <li>Replace <code>beans.json</code> at the root of your repo and commit.</li>
-            <li>Others (and future-you) will load the updated data automatically.</li>
-          </ol>
+          <p class="prose">Your records live in a Google BigQuery table in the cloud. Every bean you log is saved directly to the database — no manual sync needed. Export a JSON snapshot for backup, or import one to bulk-load beans.</p>
         </article>
 
         <article class="card">
@@ -219,8 +214,8 @@
               ⬆ Import beans.json
               <input type="file" id="import-input" accept=".json,application/json" hidden />
             </label>
-            <button class="btn btn--ghost" id="reload-btn">↻ Reload from repo</button>
-            <button class="btn btn--danger" id="clear-btn">✕ Clear local data</button>
+            <button class="btn btn--ghost" id="reload-btn">↻ Reload from database</button>
+            <button class="btn btn--danger" id="clear-btn">✕ Clear all data</button>
           </div>
           <p class="prose prose--hint" id="data-status">Ready.</p>
         </article>
@@ -229,10 +224,10 @@
   </main>
 
   <footer class="footer">
-    <p>Brewed with care · <a href="https://github.com" target="_blank" rel="noopener">hosted on GitHub Pages</a></p>
+    <p>Brewed with care · deployed on Cloud Run</p>
   </footer>
 
-  <!-- Modal for farm detail -->
+  <!-- Modal for bean detail -->
   <div class="modal" id="modal" hidden>
     <div class="modal__backdrop" data-close></div>
     <div class="modal__card">
@@ -243,8 +238,7 @@
 
   <!-- Libraries -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
-  <script src="countries.js"></script>
-  <script src="app.js"></script>
+  <script src="{{ url_for('static', filename='countries.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

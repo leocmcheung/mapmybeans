@@ -1,17 +1,12 @@
 /* =================================================================
-   Coffee Atlas — app logic
+   Coffee Atlas — app logic (Flask / BigQuery / Cloud Vision backend)
    - Tabs
-   - OCR via Tesseract.js
+   - OCR via Cloud Vision API (server-side)
    - Form extraction & submission
    - Library with search + delete
    - Leaflet map: country pins clustered, farm pins on zoom/click
-   - Data: loaded from beans.json in repo, stored in localStorage,
-           exported back as beans.json
+   - Data: loaded from BigQuery via /api/beans
 ================================================================= */
-
-// -------------------- Constants --------------------
-const STORAGE_KEY = "coffeeAtlas.beans.v1";
-const REPO_JSON_PATH = "beans.json"; // relative, sits next to index.html
 
 // -------------------- State --------------------
 let beans = [];
@@ -60,68 +55,32 @@ function initTabs() {
   });
 }
 
-// -------------------- Storage --------------------
-function loadLocal() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch { /* ignore */ }
-  return null;
-}
-
-function saveLocal() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(beans));
-  } catch (e) {
-    toast("Could not save locally: " + e.message, true);
+// -------------------- API --------------------
+async function apiFetch(path, options = {}) {
+  const res = await fetch(path, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
   }
-}
-
-async function loadFromRepo() {
-  try {
-    const res = await fetch(REPO_JSON_PATH, { cache: "no-cache" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    if (Array.isArray(data)) return data;
-    if (data && Array.isArray(data.beans)) return data.beans;
-    return [];
-  } catch (e) {
-    return null; // fine on first run — file may not exist yet
-  }
+  return res.json();
 }
 
 async function initData() {
-  // Priority: local (latest user edits) > repo file > empty
-  const local = loadLocal();
-  if (local && local.length) {
-    beans = local;
-    return;
+  try {
+    beans = await apiFetch("/api/beans");
+  } catch (e) {
+    toast("Could not load beans: " + e.message, true);
+    beans = [];
   }
-  const repo = await loadFromRepo();
-  if (repo) {
-    beans = repo;
-    saveLocal();
-    return;
-  }
-  beans = [];
 }
 
 // -------------------- OCR --------------------
-let ocrWorker = null;
-
 function initDropzone() {
   const dz = $("#dropzone");
   const input = $("#file-input");
   const browse = $("#browse-btn");
-  const preview = $("#preview");
 
-  const openPicker = (e) => {
-    e && e.stopPropagation();
-    input.click();
-  };
+  const openPicker = (e) => { e && e.stopPropagation(); input.click(); };
 
   dz.addEventListener("click", (e) => {
     if (!dz.classList.contains("has-preview")) openPicker(e);
@@ -150,42 +109,36 @@ function handleImage(file) {
   reader.onload = (e) => {
     preview.src = e.target.result;
     dz.classList.add("has-preview");
-    runOCR(e.target.result);
+    runOCR(file);
   };
   reader.readAsDataURL(file);
 }
 
-async function runOCR(dataUrl) {
+async function runOCR(file) {
   const statusEl = $("#ocr-status");
   const fill = $("#ocr-fill");
   const textEl = $("#ocr-text");
   statusEl.hidden = false;
-  fill.style.width = "5%";
-  textEl.textContent = "Loading text recognition engine…";
+  fill.style.width = "20%";
+  textEl.textContent = "Sending to Cloud Vision API…";
 
   try {
-    if (!ocrWorker) {
-      ocrWorker = await Tesseract.createWorker("eng", 1, {
-        logger: (m) => {
-          if (m.status === "recognizing text") {
-            fill.style.width = Math.round(m.progress * 100) + "%";
-            textEl.textContent = `Reading label… ${Math.round(m.progress * 100)}%`;
-          }
-        }
-      });
-    }
-    textEl.textContent = "Reading label…";
-    const { data } = await ocrWorker.recognize(dataUrl);
+    fill.style.width = "50%";
+    const fd = new FormData();
+    fd.append("image", file);
+    const { text, error } = await apiFetch("/api/ocr", { method: "POST", body: fd });
+    if (error) throw new Error(error);
     fill.style.width = "100%";
     textEl.textContent = "Done. Extracted fields are pre-filled below — edit as needed.";
-
-    const parsed = parseLabel(data.text || "");
-    applyParsed(parsed, data.text || "");
+    const parsed = parseLabel(text || "");
+    applyParsed(parsed);
   } catch (e) {
+    fill.style.width = "0%";
     textEl.textContent = "OCR failed: " + e.message + ". Fill the form manually.";
   }
 }
 
+// -------------------- Label parser --------------------
 // Heuristic label parser — works best on packaging with clear labels.
 function parseLabel(text) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -241,19 +194,13 @@ function parseLabel(text) {
   const fm = joined.match(farmRe);
   if (fm) result.farm = fm[1].trim();
 
-  // Name fallback — longest line in Title Case, if nothing else looks like a name
-  // (leave name empty so the user fills it; we don't want a wrong guess)
-
   return result;
 }
 
 function normalizeDate(s) {
-  // Try various formats, return ISO yyyy-mm-dd or original on failure
   s = s.trim();
-  // yyyy-mm-dd or yyyy/mm/dd
   let m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
   if (m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
-  // dd/mm/yyyy or mm/dd/yyyy — assume dd/mm/yyyy (EU common)
   m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
   if (m) {
     let y = m[3].length === 2 ? "20" + m[3] : m[3];
@@ -262,7 +209,7 @@ function normalizeDate(s) {
   return s;
 }
 
-function applyParsed(parsed, rawText) {
+function applyParsed(parsed) {
   const form = $("#bean-form");
   Object.entries(parsed).forEach(([k, v]) => {
     const el = form.elements[k];
@@ -273,7 +220,7 @@ function applyParsed(parsed, rawText) {
 // -------------------- Form --------------------
 function initForm() {
   const form = $("#bean-form");
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const record = { id: uid(), createdAt: new Date().toISOString() };
@@ -292,13 +239,25 @@ function initForm() {
       record.lng = record.lng ? parseFloat(record.lng) : null;
     }
 
-    beans.push(record);
-    saveLocal();
-    toast("Saved to library");
-    form.reset();
-    $("#dropzone").classList.remove("has-preview");
-    $("#preview").src = "";
-    $("#ocr-status").hidden = true;
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      await apiFetch("/api/beans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(record),
+      });
+      beans.unshift(record); // optimistic: prepend so it appears first in library
+      toast("Saved to library");
+      form.reset();
+      $("#dropzone").classList.remove("has-preview");
+      $("#preview").src = "";
+      $("#ocr-status").hidden = true;
+    } catch (err) {
+      toast("Save failed: " + err.message, true);
+    } finally {
+      submitBtn.disabled = false;
+    }
   });
 
   $("#geocode-btn").addEventListener("click", () => {
@@ -333,7 +292,6 @@ function renderLibrary() {
   }
 
   container.innerHTML = filtered.map(b => {
-    const notes = [b.tasteNotes, b.process].filter(Boolean);
     const tags = [b.process, b.variety].filter(Boolean);
     return `
       <article class="bean" data-id="${b.id}">
@@ -348,15 +306,19 @@ function renderLibrary() {
   }).join("");
 
   container.querySelectorAll("[data-del]").forEach(btn => {
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const id = btn.dataset.del;
       if (!confirm("Delete this bean from your library?")) return;
-      beans = beans.filter(b => b.id !== id);
-      saveLocal();
-      renderLibrary();
-      if (map) renderMap();
-      toast("Deleted");
+      try {
+        await apiFetch(`/api/beans/${id}`, { method: "DELETE" });
+        beans = beans.filter(b => b.id !== id);
+        renderLibrary();
+        if (map) renderMap();
+        toast("Deleted");
+      } catch (err) {
+        toast("Delete failed: " + err.message, true);
+      }
     });
   });
 
@@ -417,7 +379,6 @@ function initMap() {
   if (map) return;
   map = L.map("map", { worldCopyJump: true }).setView([10, 0], 2);
 
-  // Stadia-free tile option: use Carto's voyager for a warm cartographic feel
   L.tileLayer("https://cartodb-basemaps-{s}.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png", {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
     maxZoom: 18,
@@ -428,9 +389,7 @@ function initMap() {
 }
 
 function groupBeansByLocation() {
-  // country groups keyed by canonical country name
   const byCountry = new Map();
-  // farm groups — only when a bean has its own specific lat/lng (not the country centroid)
   const farms = [];
 
   for (const b of beans) {
@@ -455,12 +414,8 @@ function renderMap() {
   markerLayer.clearLayers();
 
   const { countries, farms } = groupBeansByLocation();
+  if (!countries.length && !farms.length) return;
 
-  if (!countries.length && !farms.length) {
-    return;
-  }
-
-  // Country markers
   countries.forEach(c => {
     if (c.lat == null || c.lng == null) return;
     const icon = L.divIcon({
@@ -473,7 +428,6 @@ function renderMap() {
     marker.bindPopup(buildCountryPopup(c));
   });
 
-  // Farm markers
   farms.forEach(b => {
     const icon = L.divIcon({
       className: "coffee-marker coffee-marker--farm",
@@ -486,14 +440,12 @@ function renderMap() {
     marker.on("click", () => marker.openPopup());
   });
 
-  // Fit map
   const allPoints = [
     ...countries.filter(c => c.lat != null).map(c => [c.lat, c.lng]),
     ...farms.map(b => [b.lat, b.lng]),
   ];
   if (allPoints.length) {
-    const bounds = L.latLngBounds(allPoints);
-    map.fitBounds(bounds.pad(0.2), { maxZoom: 6 });
+    map.fitBounds(L.latLngBounds(allPoints).pad(0.2), { maxZoom: 6 });
   }
 }
 
@@ -502,7 +454,6 @@ function buildCountryPopup(c) {
   wrap.innerHTML = `
     <div class="pop-title">${escapeHtml(c.country)}</div>
     <div class="pop-meta">${c.beans.length} bean${c.beans.length === 1 ? "" : "s"} logged</div>
-    <span class="pop-count">${c.beans.length}</span>
     <div style="margin-top:10px; font-size:0.85rem; max-height:180px; overflow-y:auto;">
       ${c.beans.map(b => `
         <div style="padding:6px 0; border-top:1px dotted var(--line);">
@@ -513,7 +464,6 @@ function buildCountryPopup(c) {
       `).join("")}
     </div>
   `;
-  // delegate click on the popup
   wrap.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-bean-id]");
     if (btn) {
@@ -552,7 +502,7 @@ function initDataPanel() {
     a.download = "beans.json";
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    $("#data-status").textContent = `Exported ${beans.length} bean(s) — commit beans.json to your repo to sync.`;
+    $("#data-status").textContent = `Exported ${beans.length} bean(s).`;
   });
 
   $("#import-input").addEventListener("change", async (e) => {
@@ -563,11 +513,19 @@ function initDataPanel() {
       const parsed = JSON.parse(txt);
       const arr = Array.isArray(parsed) ? parsed : parsed.beans;
       if (!Array.isArray(arr)) throw new Error("File is not a bean array.");
-      beans = arr;
-      saveLocal();
+      let count = 0;
+      for (const bean of arr) {
+        await apiFetch("/api/beans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bean),
+        });
+        count++;
+      }
+      beans = await apiFetch("/api/beans");
       renderLibrary();
       if (map) renderMap();
-      $("#data-status").textContent = `Imported ${beans.length} bean(s).`;
+      $("#data-status").textContent = `Imported ${count} bean(s).`;
       toast("Imported");
     } catch (err) {
       toast("Import failed: " + err.message, true);
@@ -575,24 +533,29 @@ function initDataPanel() {
   });
 
   $("#reload-btn").addEventListener("click", async () => {
-    const repo = await loadFromRepo();
-    if (repo === null) { toast("No beans.json found in repo", true); return; }
-    beans = repo;
-    saveLocal();
-    renderLibrary();
-    if (map) renderMap();
-    $("#data-status").textContent = `Loaded ${beans.length} bean(s) from repo.`;
-    toast("Reloaded from repo");
+    try {
+      beans = await apiFetch("/api/beans");
+      renderLibrary();
+      if (map) renderMap();
+      $("#data-status").textContent = `Loaded ${beans.length} bean(s) from database.`;
+      toast("Reloaded from database");
+    } catch (err) {
+      toast("Reload failed: " + err.message, true);
+    }
   });
 
-  $("#clear-btn").addEventListener("click", () => {
-    if (!confirm("Clear all local data? Exported beans.json is unaffected.")) return;
-    beans = [];
-    localStorage.removeItem(STORAGE_KEY);
-    renderLibrary();
-    if (map) renderMap();
-    $("#data-status").textContent = "Local data cleared.";
-    toast("Cleared");
+  $("#clear-btn").addEventListener("click", async () => {
+    if (!confirm("Delete ALL beans from the cloud database? This cannot be undone.")) return;
+    try {
+      await apiFetch("/api/beans", { method: "DELETE" });
+      beans = [];
+      renderLibrary();
+      if (map) renderMap();
+      $("#data-status").textContent = "All data deleted from database.";
+      toast("Cleared");
+    } catch (err) {
+      toast("Clear failed: " + err.message, true);
+    }
   });
 }
 
