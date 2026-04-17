@@ -804,3 +804,42 @@ textarea { resize: vertical; font-family: var(--font-display); }
   display: block;
   margin-bottom: 1.25rem;
 }
+
+/* ---- Dual dropzone ---- */
+.dropzone-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+@media (max-width: 540px) {
+  .dropzone-pair { grid-template-columns: 1fr; }
+}
+.dropzone--secondary { opacity: 0.85; }
+
+.dropzone__optional {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.dropzone__pdf {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: var(--card-bg);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink);
+  opacity: 0.8;
+  padding: 0.5rem;
+  text-align: center;
+  word-break: break-all;
+}
+
+.btn--scan {
+  width: 100%;
+  margin-top: 0.75rem;
+}

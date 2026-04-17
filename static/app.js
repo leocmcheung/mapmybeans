@@ -6,8 +6,10 @@
 let beans = [];
 let map = null;
 let markerLayer = null;
-let currentBeanId  = null; // set when an image is dropped, reused on form submit
+let currentBeanId   = null;
 let currentImageUrl = null;
+let currentFile1    = null; // primary image file
+let currentFile2    = null; // secondary image or PDF file
 
 // -------------------- Utilities --------------------
 const $ = (sel) => document.querySelector(sel);
@@ -70,11 +72,11 @@ async function initData() {
 }
 
 // -------------------- OCR --------------------
-function initDropzone() {
-  const dz = $("#dropzone");
-  const input = $("#file-input");
-  const browse = $("#browse-btn");
+function updateScanBtn() {
+  $("#scan-btn").disabled = !currentFile1;
+}
 
+function makeDzHandlers(dz, input, browse, isSecondary) {
   const openPicker = (e) => { e && e.stopPropagation(); input.click(); };
 
   dz.addEventListener("click", (e) => {
@@ -82,9 +84,9 @@ function initDropzone() {
   });
   browse.addEventListener("click", openPicker);
   input.addEventListener("change", (e) => {
-    if (e.target.files && e.target.files[0]) handleImage(e.target.files[0]);
+    const f = e.target.files && e.target.files[0];
+    if (f) isSecondary ? handleFile2(f) : handleFile1(f);
   });
-
   ["dragover", "dragenter"].forEach(ev =>
     dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); })
   );
@@ -93,36 +95,69 @@ function initDropzone() {
   );
   dz.addEventListener("drop", (e) => {
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleImage(f);
+    if (f) isSecondary ? handleFile2(f) : handleFile1(f);
   });
 }
 
-function handleImage(file) {
-  currentBeanId  = uid(); // fix the ID now so the GCS filename matches the saved bean
+function initDropzone() {
+  makeDzHandlers($("#dropzone"),  $("#file-input"),  $("#browse-btn"),  false);
+  makeDzHandlers($("#dropzone2"), $("#file-input2"), $("#browse-btn2"), true);
+
+  $("#scan-btn").addEventListener("click", () => {
+    if (currentFile1) runOCR();
+  });
+}
+
+function handleFile1(file) {
+  if (!currentBeanId) currentBeanId = uid();
   currentImageUrl = null;
+  currentFile1 = file;
   const dz = $("#dropzone");
   const reader = new FileReader();
   reader.onload = (e) => {
     $("#preview").src = e.target.result;
     dz.classList.add("has-preview");
-    runOCR(file);
   };
   reader.readAsDataURL(file);
+  updateScanBtn();
 }
 
-async function runOCR(file) {
+function handleFile2(file) {
+  currentFile2 = file;
+  const dz2 = $("#dropzone2");
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  if (isPdf) {
+    $("#preview2").src = "";
+    dz2.classList.add("has-preview");
+    $("#pdf-indicator").hidden = false;
+    $("#pdf-name").textContent = file.name;
+  } else {
+    $("#pdf-indicator").hidden = true;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      $("#preview2").src = e.target.result;
+      dz2.classList.add("has-preview");
+    };
+    reader.readAsDataURL(file);
+  }
+  updateScanBtn();
+}
+
+async function runOCR() {
   const statusEl = $("#ocr-status");
   const fill = $("#ocr-fill");
   const textEl = $("#ocr-text");
   statusEl.hidden = false;
   fill.style.width = "20%";
   textEl.textContent = "Sending to Cloud Vision API…";
+  $("#scan-btn").disabled = true;
 
   try {
     fill.style.width = "50%";
     const fd = new FormData();
-    fd.append("image", file);
-    fd.append("beanId", currentBeanId); // so GCS filename matches future bean ID
+    fd.append("image", currentFile1);
+    fd.append("beanId", currentBeanId);
+    if (currentFile2) fd.append("image2", currentFile2);
     const { text, imageUrl, imageError, error } = await apiFetch("/api/ocr", { method: "POST", body: fd });
     if (error) throw new Error(error);
     if (imageError) toast("Image not saved: " + imageError, true);
@@ -134,6 +169,8 @@ async function runOCR(file) {
   } catch (e) {
     fill.style.width = "0%";
     textEl.textContent = "OCR failed: " + e.message + ". Fill the form manually.";
+  } finally {
+    $("#scan-btn").disabled = !currentFile1;
   }
 }
 
@@ -240,12 +277,18 @@ function initForm() {
         body: JSON.stringify(record),
       });
       beans.unshift(record);
-      currentBeanId  = null;
+      currentBeanId   = null;
       currentImageUrl = null;
+      currentFile1    = null;
+      currentFile2    = null;
       toast("Saved to library");
       form.reset();
       $("#dropzone").classList.remove("has-preview");
+      $("#dropzone2").classList.remove("has-preview");
       $("#preview").src = "";
+      $("#preview2").src = "";
+      $("#pdf-indicator").hidden = true;
+      $("#scan-btn").disabled = true;
       $("#ocr-status").hidden = true;
     } catch (err) {
       toast("Save failed: " + err.message, true);

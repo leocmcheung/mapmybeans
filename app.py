@@ -230,37 +230,57 @@ def geocode():
     })
 
 
+def _upload_to_gcs(img_bytes, content_type, filename):
+    blob = gcs().bucket(GCS_BUCKET).blob(f"images/{filename}")
+    blob.upload_from_string(img_bytes, content_type=content_type or "image/jpeg")
+
+
+def _ocr_bytes(img_bytes):
+    image = vision.Image(content=img_bytes)
+    resp = vc().document_text_detection(image=image)
+    if resp.error.message:
+        raise RuntimeError(resp.error.message)
+    return resp.full_text_annotation.text if resp.full_text_annotation else ""
+
+
 @app.route("/api/ocr", methods=["POST"])
 def ocr():
     if "image" not in request.files:
         return jsonify({"error": "No image provided"}), 400
 
-    f = request.files["image"]
-    img_bytes = f.read()
+    f1 = request.files["image"]
+    f2 = request.files.get("image2")
+    bytes1 = f1.read()
+    bytes2 = f2.read() if f2 else None
     bean_id = request.form.get("beanId") or str(uuid.uuid4())
 
-    # Upload to GCS and return a proxy URL
     image_url = None
     image_error = None
+
     if GCS_BUCKET:
         try:
-            ext = (f.filename or "").rsplit(".", 1)[-1].lower() or "jpg"
-            filename = f"{bean_id}.{ext}"
-            blob = gcs().bucket(GCS_BUCKET).blob(f"images/{filename}")
-            blob.upload_from_string(img_bytes, content_type=f.content_type or "image/jpeg")
-            image_url = f"/api/image/{filename}"
+            ext1 = (f1.filename or "").rsplit(".", 1)[-1].lower() or "jpg"
+            _upload_to_gcs(bytes1, f1.content_type, f"{bean_id}.{ext1}")
+            image_url = f"/api/image/{bean_id}.{ext1}"
+
+            if bytes2:
+                ext2 = (f2.filename or "").rsplit(".", 1)[-1].lower() or "jpg"
+                _upload_to_gcs(bytes2, f2.content_type, f"{bean_id}_2.{ext2}")
         except Exception as e:
             image_error = str(e)
             print(f"GCS upload failed: {e}")
-    elif not GCS_BUCKET:
+    else:
         image_error = "GCS_BUCKET env var not set"
 
-    # OCR
-    image = vision.Image(content=img_bytes)
-    resp = vc().document_text_detection(image=image)
-    if resp.error.message:
-        return jsonify({"error": resp.error.message}), 500
-    text = resp.full_text_annotation.text if resp.full_text_annotation else ""
+    try:
+        text = _ocr_bytes(bytes1)
+        if bytes2:
+            text2 = _ocr_bytes(bytes2)
+            if text2:
+                text = text + "\n\n" + text2
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
     return jsonify({"text": text, "imageUrl": image_url, "imageError": image_error})
 
 
