@@ -1,6 +1,6 @@
-# Coffee Atlas ☕
+# MapMyBeans
 
-A personal journal of coffee beans and their journeys — upload a photo of the bag, let it read the label, then track each bean on a world map.
+Scan the bag, map the bean.
 
 ## Features
 
